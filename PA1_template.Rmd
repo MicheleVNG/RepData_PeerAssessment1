@@ -1,25 +1,167 @@
 ---
 title: "Reproducible Research: Peer Assessment 1"
 output: 
-  html_document:
-    keep_md: true
+html_document:
+keep_md: true
 ---
-
 
 ## Loading and preprocessing the data
 
+I use the various packages in the `tidyverse` (such as `dplyr`) for data 
+wrangling, so I need to load the packages with:
+
+```{r packages}
+suppressPackageStartupMessages(library(tidyverse))
+```
+
+Then, we can simply import the data:
+
+```{r import, cache=TRUE}
+unzip("activity.zip")
+activityData <- read_csv("activity.csv", col_types = "iDi")
+```
 
 
 ## What is mean total number of steps taken per day?
 
+Here, the activity data is summarized to produce an histogram of the total number
+of steps taken each day.
 
+```{r histogram, fig.height=4, fig.width=4.5}
+totalSteps <- activityData %>% 
+	group_by(date) %>% 
+	summarize(steps = sum(steps))
+
+hist(totalSteps$steps, col = "wheat",
+     main = "Steps taken each day", xlab = "Total Steps")
+```
+
+Then, we calculate the mean and the median of the total number of steps.
+
+```{r mean and median}
+meanSteps <- mean(totalSteps$steps, na.rm = TRUE)
+meanSteps
+medianSteps <- median(totalSteps$steps, na.rm = TRUE)
+medianSteps
+```
 
 ## What is the average daily activity pattern?
 
+To give an overview of the average daily activity, we calculate the average 
+activity (**steps**) across all days, and plot it against the 5-minute interval 
+*in each day*.  
 
+We then calculate the moment in the day with the maximum average activity, and 
+also add it to the graph with a red vertical line.
+
+```{r daily activity}
+averageActivity <- activityData %>% 
+	group_by(interval) %>% 
+	summarize(steps = mean(steps, na.rm = TRUE))
+
+with(averageActivity,
+     plot(interval, steps, type = "l", main = "Average daily activity",
+          xlab = "5-minute interval in the day", ylab = "Average number of steps"))
+
+maxValue <- averageActivity[averageActivity$steps == max(averageActivity$steps), ]
+abline(v = maxValue$interval, col = "red")
+maxValue$interval
+```
 
 ## Imputing missing values
 
+There are a number of days/intervals where there are missing values: we need 
+to analyze the problem a bit in order to understand if it's necessary to input 
+some of the missing value to have more reliable calculations and summaries.
 
+Out of `r nrow(activityData)` total observations, the number of incomplete 
+cases (i.e. with at least one missing value) is equal to:
+
+```{r count NAs}
+sum(!complete.cases(activityData))
+```
+
+This means that `r paste0(round(mean(!complete.cases(activityData))*100, 2), "%")` 
+of the rows are incomplete.
+
+To fill in the missing values, I decided to simply use the mean value for that 
+5-minute interval. The mean is a **numeric** variable, but I decided to round 
+the value to the nearest **integer**, to be consistent with the original data frame.
+
+The following code inputs the missing values and creates a new data frame called
+`completeData`:
+
+```{r input NAs}
+incompleteData <- activityData[!complete.cases(activityData), ]
+filledData <- merge(incompleteData, averageActivity, by = "interval",
+		    all.x = TRUE, all.y = FALSE)
+filledData <- filledData %>% 
+	mutate(steps = as.integer(steps.y)) %>%  # Rounding to the nearest integer
+	select(steps, date, interval) %>% 
+	tbl_df
+
+completeData <- activityData[complete.cases(activityData), ]
+completeData <- rbind(completeData, filledData) %>% 
+	arrange(date, interval)
+```
+
+As requested, I now recalculate both the histogram, the mean and the median values.
+
+```{r new histogram mean and median, fig.height=4, fig.width=9}
+newTotalSteps <- completeData %>% 
+	group_by(date) %>% 
+	summarize(steps = sum(steps))
+
+par(mfrow = c(1, 2))
+hist(totalSteps$steps, col = "wheat",
+     main = "Steps taken each day (with NAs)", xlab = "Total Steps")
+hist(newTotalSteps$steps, col = "tan1",
+     main = "Steps taken each day (without NAs)", xlab = "Total Steps")
+
+newMeanSteps <- mean(newTotalSteps$steps, na.rm = TRUE)
+newMedianSteps <- median(newTotalSteps$steps, na.rm = TRUE)
+tab <- data.frame(With.NAs = c(meanSteps, medianSteps),
+		  Without.NAs = c(newMeanSteps, newMedianSteps),
+		  row.names = c("Mean", "Median"))
+print(tab)
+```
+
+Filling in the missing values produced an alteration in the summaries: the new 
+mean is lower than before (**`r round((newMeanSteps-meanSteps)/meanSteps*100, 2)`%** 
+variation), and also the median is lower (
+**`r round((newMedianSteps-medianSteps)/medianSteps*100, 2)`%** variation).
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+Here I create a new variable to indicate whether a day is a **weekday** or
+a **weekend** day.
+
+```{r weekday and weekend}
+Sys.setlocale("LC_TIME", "en_US.UTF-8") # Forcing English locale
+library(forcats)
+weekday <- as.factor(weekdays(completeData$date, abbreviate = TRUE))
+completeData$day.type <- fct_recode(weekday,
+				    "weekday" = "Mon", "weekday" = "Tue",
+				    "weekday" = "Wed", "weekday" = "Thu",
+				    "weekday" = "Fri",
+				    "weekend" = "Sat", "weekend" = "Sun")
+```
+
+Then, I use the `ggplot2` package to create the panel plot:
+
+```{r panel plot}
+library(ggplot2)
+by_daytype <- completeData %>% 
+	group_by(day.type, interval) %>% 
+	mutate(averageSteps = mean(steps))
+
+g <- ggplot(by_daytype, aes(interval, averageSteps))
+g + facet_grid(day.type ~ .) +
+	geom_line() +
+	labs(x = "5-minute interval in the day", y = "Average number of steps",
+	     title = "Differences in average activity weekday vs. weekend")
+
+
+```
+
+Note that the average activity is different depending on the day type.
